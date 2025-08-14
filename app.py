@@ -112,10 +112,17 @@ def kakao_skill():
 
     # 4) 퀵리플라이 버튼
     quick_replies = [
-        {"label": "방과후 안내", "action": "message", "messageText": "방과후 안내"},
-        {"label": "학교 위치", "action": "message", "messageText": "학교 위치"},
-        {"label": "전입·전출", "action": "message", "messageText": "전입 전출"},
-    ]
+        {"label": "📅 학사일정", "action": "message", "messageText": "📅 학사일정"},
+        {"label": "📋 늘봄/방과후", "action": "message", "messageText": "📋 늘봄/방과후"},
+        {"label": "📖 수업시간/시정표(초등)", "action": "message", "messageText": "📖 수업시간/시정표(초등)"},
+        {"label": "📚 교과서 ", "action": "message", "messageText": "📚 교과서 "}
+        {"label": "🏠 전입/전출 ", "action": "message", "messageText": "🏠 전입/전출 "}
+        {"label": "📋 증명서/서류", "action": "message", "messageText": "📋 증명서/서류"}
+        {"label": "📞 연락처/상담", "action": "message", "messageText": "📞 연락처/상담"}
+        {"label": "🍽️급식", "action": "message", "messageText": "🍽️급식"}
+        {"label": "🎶 기타", "action": "message", "messageText": "🎶 기타"}
+        {"label": "🧸유치원", "action": "message", "messageText": "🧸유치원"}
+]
 
     response = {
         "version": "2.0",
