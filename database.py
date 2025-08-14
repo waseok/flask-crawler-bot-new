@@ -181,3 +181,24 @@ class DatabaseManager:
             }
             for row in results
         ]
+# --- add: simple diagnostics ---
+def db_diagnostics():
+    import os
+    info = {"path": None, "exists": False, "size": 0, "integrity": "unknown"}
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        db_path = os.path.join(base_dir, "school_data.db")
+        info["path"] = db_path
+        info["exists"] = os.path.exists(db_path)
+        if info["exists"]:
+            info["size"] = os.path.getsize(db_path)
+            import sqlite3
+            con = sqlite3.connect(db_path)
+            cur = con.cursor()
+            cur.execute("PRAGMA integrity_check;")
+            info["integrity"] = cur.fetchone()[0]  # 'ok'면 정상
+            con.close()
+    except Exception as e:
+        info["integrity"] = f"error: {e}"
+    return info
+
