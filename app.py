@@ -656,14 +656,15 @@ def test():
             exception_handler(e)
             return jsonify({"error": str(e)}), 500
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """헬스 체크 엔드포인트"""
+@app.get("/health")
+def health():
+    diag = db_diagnostics()
+    connected = (diag.get("exists") and diag.get("integrity") == "ok")
     return jsonify({
         "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "database": "connected" if db else "disconnected"
-    })
+        "database": "connected" if connected else "disconnected",
+        "diag": diag
+    }), 200
 
 @app.route('/stats', methods=['GET'])
 def get_stats():
