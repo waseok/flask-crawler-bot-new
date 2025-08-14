@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import json
 from datetime import datetime, timezone, timedelta
@@ -11,8 +12,13 @@ def get_kst_now():
     return datetime.now(KST)
 
 class DatabaseManager:
-    def __init__(self, db_path: str = "school_data.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        """
+        db_path가 명시되지 않으면, 이 파일(database.py)과 같은 폴더의 school_data.db를 절대경로로 사용.
+        (Render 등 배포 환경에서 상대경로 문제 방지)
+        """
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.db_path = db_path or os.path.join(base_dir, "school_data.db")
         self.init_database()
     
     def init_database(self):
@@ -174,4 +180,4 @@ class DatabaseManager:
                 'category': row[6]
             }
             for row in results
-        ] 
+        ]
