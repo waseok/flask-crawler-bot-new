@@ -1,38 +1,67 @@
-# app.py
 import os
 import json
+import sqlite3
+import numpy as np
 from flask import Flask, request, jsonify
+from openai import OpenAI
+
+from database import DatabaseManager, db_diagnostics  # database.py에서 불러옴
 
 app = Flask(__name__)
 
-# --- DB 초기화 (에러가 나도 서버가 뜨도록 방어) ---
-db = None
+# === OpenAI 설정 ===
+client = OpenAI()
+
+def _cos(a, b):
+    a = np.array(a)
+    b = np.array(b)
+    return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
+
+def _embed_query(text: str):
+    return client.embeddings.create(
+        model="text-embedding-3-small", input=text
+    ).data[0].embedding
+
+def semantic_answer(utter: str, db_path: str, threshold: float = 0.80):
+    """DB에 저장된 임베딩 벡터와 비교하여 가장 유사한 답변 반환"""
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+    cur.execute("""
+      SELECT qa_data.id, qa_data.question, qa_data.answer, qa_embeddings.vector
+      FROM qa_data
+      JOIN qa_embeddings ON qa_embeddings.qa_id = qa_data.id
+    """)
+    rows = cur.fetchall()
+    con.close()
+    if not rows:
+        return None
+
+    uvec = _embed_query(utter)
+    best, best_s = None, -1.0
+    for qa_id, q, a, vjson in rows:
+        try:
+            v = json.loads(vjson)
+            s = _cos(uvec, v)
+            if s > best_s:
+                best, best_s = a, s
+        except:
+            continue
+    return best if best_s >= threshold else None
+
+# === DB 매니저 ===
 try:
-    from database import DatabaseManager  # database.py에 있는 클래스
-    db = DatabaseManager()                # school_data.db가 같은 폴더에 있어야 함
+    db = DatabaseManager()
 except Exception as e:
-    # DB 초기화 실패 시에도 앱은 살아 있게 두고, /health에서 원인 표시
     db = None
     app.logger.error(f"[DB INIT ERROR] {type(e).__name__}: {e}")
 
-
-# --- 가장 안전한 /health 엔드포인트 ---
+# === 헬스체크 ===
 @app.route("/health", methods=["GET"])
 def health():
-    """
-    서버/DB 상태를 JSON으로 반환.
-    - database.py의 db_diagnostics()를 안전하게 호출
-    - 어떤 예외가 나도 500이 아닌 200으로 JSON을 돌려줌 (운영 확인 용도)
-    """
     try:
-        # 순환/초기화 이슈 피하려고 함수 내부에서 임포트
-        from database import db_diagnostics
-        try:
-            diag = db_diagnostics()
-        except Exception as e:
-            diag = {"error": f"db_diagnostics error: {type(e).__name__}: {e}"}
+        diag = db_diagnostics()
     except Exception as e:
-        diag = {"error": f"import error: {type(e).__name__}: {e}"}
+        diag = {"error": f"db_diagnostics error: {type(e).__name__}: {e}"}
 
     connected = bool(diag.get("exists")) and diag.get("integrity") == "ok"
     return jsonify({
@@ -41,35 +70,21 @@ def health():
         "diag": diag
     }), 200
 
-
-# --- (선택) 루트 GET: 간단 핑 ---
-@app.route("/", methods=["GET"])
-def index():
-    return jsonify({"ok": True, "message": "Flask server is running"}), 200
-
-
-# --- 카카오 오픈빌더 스킬용 루트 POST (안전한 최소본) ---
+# === 카카오 오픈빌더 스킬 엔드포인트 ===
 @app.route("/", methods=["POST"])
 def kakao_skill():
-    """
-    오픈빌더 API 스킬에서 호출하는 엔드포인트.
-    - 요청 바디에서 발화(utterance)를 꺼내고
-    - 간단히 응답(JSON, version 2.0)을 반환
-    - DB 사용 시에도 예외를 삼켜서 500이 나지 않게 처리
-    """
     try:
-        body = request.get_json(silent=True, force=False) or {}
+        body = request.get_json(silent=True) or {}
         utter = (body.get("userRequest", {}).get("utterance") or "").strip()
     except Exception:
-        body, utter = {}, ""
+        utter = ""
 
     answer = None
 
-    # 1) DB가 있으면 간단 조회(필요 없으면 이 블록 제거해도 됨)
+    # 1) DB에서 정확/포함 매칭
     if db is not None and utter:
         try:
-            # 아주 단순한 contains 매칭 (프로덕션에선 적합한 검색 로직으로 교체)
-            rows = db.get_qa_data()  # [{'question':..., 'answer':...}, ...]
+            rows = db.get_qa_data()
             for r in rows:
                 q = (r.get("question") or "").strip()
                 if q and (utter in q or q in utter):
@@ -78,65 +93,40 @@ def kakao_skill():
         except Exception as e:
             app.logger.error(f"[DB QUERY ERROR] {type(e).__name__}: {e}")
 
-    # 2) 폴백 응답
-    if not answer:
-        # 사용자가 보기 좋게 기본 안내
-        if utter:
-            answer = f"'{utter}'에 대한 준비된 답을 찾지 못했어요.\n아래 메뉴로 계속해 보세요!"
-        else:
-            answer = "무엇을 도와드릴까요?\n예) 학사일정, 오늘 급식, 가정통신문"
+    # 2) 임베딩 유사도 검색
+    if not answer and utter:
+        try:
+            answer = semantic_answer(utter, db.db_path, threshold=0.80)
+        except Exception as e:
+            app.logger.error(f"[SEMANTIC ERROR] {type(e).__name__}: {e}")
 
-    # 카카오 응답 포맷 (SimpleText + QuickReplies)
+    # 3) 폴백 응답
+    if not answer:
+        if utter:
+            answer = (
+                "원하시는 정보를 찾지 못했어요 😥\n\n"
+                "아래 메뉴에서 선택하시거나, 더 구체적으로 물어봐 주세요."
+            )
+        else:
+            answer = "무엇을 도와드릴까요? 🙂"
+
+    # 4) 퀵리플라이 버튼
+    quick_replies = [
+        {"label": "방과후 안내", "action": "message", "messageText": "방과후 안내"},
+        {"label": "학교 위치", "action": "message", "messageText": "학교 위치"},
+        {"label": "전입·전출", "action": "message", "messageText": "전입 전출"},
+    ]
+
     response = {
         "version": "2.0",
         "template": {
             "outputs": [{"simpleText": {"text": answer}}],
-            "quickReplies": [
-                {"label": "📅학사일정", "action": "message", "messageText": "📅학사일정"},
-                {"label": "📋늘봄/방과후", "action": "message", "messageText": "📋늘봄/방과"},
-                {"label": "📖수업시간/시간표", "action": "message", "messageText": "📖수업시간/시간표"},
-                {"label": "🍽️급식", "action": "message", "messageText": "🍽️급식"},
-                {"label": "📞연락처/상담", "action": "message", "messageText": "📞연락처/상담"},
-                {"label": "📋증명서/서류 발급", "action": "message", "messageText": "📋증명서/서류 발급"},
-                {"label": "🏠전입/전출", "action": "message", "messageText": "🏠전입/전출"},
-                {"label": "📚교과서", "action": "message", "messageText": "📚교과서"},
-                {"label": "🍽️기타", "action": "message", "messageText": "🍽️기타"},
-                
-            ]
+            "quickReplies": quick_replies
         }
     }
     return jsonify(response), 200
 
-
-# --- (선택) 간단 통계: 테이블 개수만 반환 (문제 생겨도 500 방지) ---
-@app.route("/stats", methods=["GET"])
-def stats():
-    info = {"ok": True, "tables": {}, "error": None}
-    try:
-        if db is None:
-            raise RuntimeError("DB is not initialized")
-        # 각 테이블 개수 집계 (필요 없으면 제거 가능)
-        try:
-            from sqlite3 import connect
-            conn = connect(db.db_path)
-            cur = conn.cursor()
-            for t in ("qa_data", "conversation_history", "meals", "notices"):
-                try:
-                    cur.execute(f"SELECT COUNT(*) FROM {t}")
-                    info["tables"][t] = cur.fetchone()[0]
-                except Exception:
-                    info["tables"][t] = "N/A"
-            conn.close()
-        except Exception as e:
-            info["error"] = f"stats error: {type(e).__name__}: {e}"
-    except Exception as e:
-        info["error"] = f"init error: {type(e).__name__}: {e}"
-    return jsonify(info), 200
-
-
-# --- 앱 실행 (로컬 테스트용) ---
+# === 메인 실행 ===
 if __name__ == "__main__":
-    # Render에서는 gunicorn을 쓰는 게 일반적이지만,
-    # 로컬에선 아래로 실행해도 됩니다.
-    port = int(os.getenv("PORT", "5000"))
+    port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
