@@ -92,9 +92,16 @@ def kakao_skill():
         "template": {
             "outputs": [{"simpleText": {"text": answer}}],
             "quickReplies": [
-                {"label": "학사일정", "action": "message", "messageText": "학사일정"},
-                {"label": "오늘 급식", "action": "message", "messageText": "오늘 급식"},
-                {"label": "가정통신문", "action": "message", "messageText": "가정통신문"},
+                {"label": "📅학사일정", "action": "message", "messageText": "📅학사일정"},
+                {"label": "📋늘봄/방과후", "action": "message", "messageText": "📋늘봄/방과"},
+                {"label": "📖수업시간/시간표", "action": "message", "messageText": "📖수업시간/시간표"},
+                {"label": "🍽️급식", "action": "message", "messageText": "🍽️급식"},
+                {"label": "📞연락처/상담", "action": "message", "messageText": "📞연락처/상담"},
+                {"label": "📋증명서/서류 발급", "action": "message", "messageText": "📋증명서/서류 발급"},
+                {"label": "🏠전입/전출", "action": "message", "messageText": "🏠전입/전출"},
+                {"label": "📚교과서", "action": "message", "messageText": "📚교과서"},
+                {"label": "🍽️기타", "action": "message", "messageText": "🍽️기타"},
+                
             ]
         }
     }
