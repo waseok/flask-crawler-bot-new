@@ -7,4 +7,7 @@ numpy>=1.26.0
 apscheduler>=3.10.4
 gunicorn>=21.2.0
 python-dotenv>=1.0.0
+
 PyJWT>=2.8.0 
+openai
+numpy
