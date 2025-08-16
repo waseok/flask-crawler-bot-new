@@ -225,3 +225,20 @@ def kakao_skill():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
+# 임시 통계 라우트
+@app.get("/stats_pages")
+def stats_pages():
+    import sqlite3
+    con = sqlite3.connect(db.db_path)
+    cur = con.cursor()
+    out = {}
+    for t in ("pages", "page_embeddings", "qa_data", "qa_embeddings"):
+        try:
+            cur.execute(f"SELECT COUNT(*) FROM {t}")
+            out[t] = cur.fetchone()[0]
+        except Exception:
+            out[t] = "N/A"
+    con.close()
+    return jsonify(out), 200
+
