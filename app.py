@@ -67,118 +67,59 @@ def health():
 # -----------------------------
 @app.post("/")
 def main_skill():
-    body = request.get_json()
-    user_text = body.get("userRequest", {}).get("utterance", "")
+    # 어떤 에러가 나도 500 터지지 않게 전역 가드
+    try:
+        body = request.get_json(silent=True) or {}
+        utter = (body.get("userRequest", {}).get("utterance") or "").strip()
+    except Exception as e:
+        utter = ""
 
-    # DB에서 QA 불러오기
-    db = DatabaseManager()
-    qa_list = db.get_qa_data()
+    # 1) QA 포함/정확 매칭 → 2) 임베딩 매칭
+    answer = None
+    try:
+        if db is not None and utter:
+            # (1) 포함/정확 매칭
+            try:
+                rows = db.get_qa_data()
+                for r in rows:
+                    q = (r.get("question") or "").strip()
+                    if q and (utter in q or q in utter):
+                        answer = (r.get("answer") or "").strip()
+                        break
+            except Exception as e:
+                app.logger.error(f"[DB QUERY ERROR] {type(e).__name__}: {e}")
 
-    # 임베딩 검색
-    q_emb = _embed_query(user_text)
-    scored = []
-    for q, a, emb in qa_list:
+            # (2) 임베딩 매칭
+            if not answer:
+                try:
+                    answer = semantic_answer(utter, db.db_path, threshold=0.75)
+                except Exception as e:
+                    app.logger.error(f"[SEMANTIC ERROR] {type(e).__name__}: {e}")
+    except Exception as e:
+        app.logger.error(f"[MAIN QA BLOCK ERROR] {type(e).__name__}: {e}")
+
+    # 3) QA가 없으면 링크추천으로 위임 (이 엔드포인트가 200이면 카드, 204면 폴백 처리)
+    if not answer and utter:
         try:
-            emb = json.loads(emb)
-            score = _cos(q_emb, emb)
-            scored.append((score, q, a))
-        except Exception:
-            continue
+            return link_reco_internal(utter)  # 200(listCard) 또는 204(No Content)
+        except Exception as e:
+            app.logger.error(f"[LINK RECO DELEGATE ERROR] {type(e).__name__}: {e}")
 
-    scored.sort(reverse=True, key=lambda x: x[0])
-    best = scored[0] if scored else None
-
-    if best and best[0] >= 0.75:
-        answer = best[2]
-    else:
-        # 답변이 없으면 link_reco로 포워딩
-        return link_reco_internal(user_text)
+    # 4) 최종 폴백(텍스트)
+    if not answer:
+        answer = (
+            "원하시는 정보를 정확히 찾지 못했어요.\n"
+            "아래 메뉴를 눌러보시거나, 더 구체적으로 물어봐 주세요 🙂"
+        )
 
     return jsonify({
         "version": "2.0",
         "template": {
-            "outputs": [{
-                "simpleText": {"text": answer}
-            }],
+            "outputs": [{"simpleText": {"text": answer}}],
             "quickReplies": QUICK_REPLIES
         }
-    })
+    }), 200
 
-# -----------------------------
-# 링크 추천 스킬 (/link_reco)
-# -----------------------------
-@app.post("/link_reco")
-def link_reco():
-    body = request.get_json()
-    user_text = body.get("userRequest", {}).get("utterance", "")
-    return link_reco_internal(user_text)
-
-def link_reco_internal(user_text: str):
-    db_path = os.path.join(os.path.dirname(__file__), "school_data.db")
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    cur.execute("SELECT url, title, content, embedding FROM pages")
-    rows = cur.fetchall()
-    conn.close()
-
-    if not rows:
-        return ("", 204)
-
-    q_emb = _embed_query(user_text)
-    candidates = []
-    for url, title, content, emb in rows:
-        try:
-            emb = json.loads(emb)
-            score = _cos(q_emb, emb)
-            candidates.append((score, title, url, content))
-        except Exception:
-            continue
-
-    candidates.sort(reverse=True, key=lambda x: x[0])
-
-    # 임계값 필터링
-    GOOD = [c for c in candidates if c[0] >= 0.70]
-
-    # URL 정규화 & 중복 제거
-    def _normalize_url(u):
-        s = urlsplit(u)
-        return urlunsplit((s.scheme, s.netloc, s.path, "", ""))
-
-    seen = set()
-    dedup = []
-    for score, title, url, content in GOOD:
-        key = _normalize_url(url)
-        if key in seen:
-            continue
-        seen.add(key)
-        dedup.append((score, title, url, content))
-
-    GOOD = dedup[:5]  # 최대 5개만
-
-    if not GOOD:
-        return ("", 204)
-
-    items = []
-    for score, title, url, content in GOOD:
-        snippet = (content or "").strip().replace("\n", " ")[:80]
-        items.append({
-            "title": title[:50] if title else url,
-            "description": snippet if snippet else f"관련도 {score:.2f}",
-            "link": {"web": url}
-        })
-
-    return jsonify({
-        "version": "2.0",
-        "template": {
-            "outputs": [{
-                "listCard": {
-                    "header": {"title": "가장 관련있는 학교 홈페이지 안내"},
-                    "items": items
-                }
-            }],
-            "quickReplies": QUICK_REPLIES
-        }
-    })
 
 # -----------------------------
 # 앱 실행 (로컬)
