@@ -1,0 +1,61 @@
+name: Crawl & Embed (KST 04:00 daily)
+
+on:
+  schedule:
+    # GitHub Actions는 UTC 기준. KST(UTC+9) 04:00 = 전날 19:00 UTC
+    - cron: '0 19 * * *'
+  workflow_dispatch: {}  # 필요시 수동 실행 버튼
+
+concurrency:
+  group: crawl-and-embed
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run crawler
+        env:
+          START_URLS_JSON: ${{ secrets.START_URLS_JSON }}
+        run: |
+          python crawler.py
+
+      - name: Build page embeddings
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python page_embeddings.py
+
+      - name: Build QA embeddings (optional)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python build_embeddings.py
+
+      - name: Commit & push if DB changed
+        run: |
+          if git status --porcelain | grep -E 'school_data\.db'; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add school_data.db
+            git commit -m "auto: update school_data.db (crawl & embed)"
+            git push
+          else
+            echo "No DB changes."
+          fi
