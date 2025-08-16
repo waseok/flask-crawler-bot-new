@@ -120,7 +120,7 @@ def link_reco():
 
     try:
         candidates = search_pages(utter, db.db_path, topk=3)
-        GOOD = [c for c in candidates if c[0] >= 0.78]  # 충분히 유사한 것만
+       GOOD = [c for c in candidates if c[0] >= 0.60] # 충분히 유사한 것만
         if not GOOD:
             return ("", 204)
 
