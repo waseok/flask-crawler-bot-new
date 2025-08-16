@@ -58,7 +58,9 @@ def semantic_answer(utter: str, db_path: str, threshold: float = 0.75):
 
 # === 페이지 임베딩 검색 ===
 def search_pages(utter: str, db_path: str, topk: int = 3):
+    import sqlite3, json
     import numpy as np
+
     con = sqlite3.connect(db_path)
     cur = con.cursor()
     cur.execute("""
@@ -70,7 +72,9 @@ def search_pages(utter: str, db_path: str, topk: int = 3):
     if not rows:
         return []
 
-    qv = _embed_query(utter)  # 이미 있는 함수 사용
+    # 이미 있는 임베딩 함수 사용
+    qv = _embed_query(utter)
+
     def cos(a, b):
         a = np.array(a); b = np.array(b)
         return float(a @ b / (np.linalg.norm(a)*np.linalg.norm(b) + 1e-8))
@@ -81,7 +85,7 @@ def search_pages(utter: str, db_path: str, topk: int = 3):
             v = json.loads(vjson)
             s = cos(qv, v)
             scored.append((s, title, url))
-        except:
+        except Exception:
             continue
     scored.sort(reverse=True, key=lambda x: x[0])
     return scored[:topk]
