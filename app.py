@@ -50,14 +50,18 @@ def _embed_query(text: str):
 # -----------------------------
 @app.get("/health")
 def health():
-    diag = db_diagnostics()
-    connected = (diag.get("exists") and diag.get("integrity") == "ok")
+    try:
+        diag = db_diagnostics()
+    except Exception as e:
+        # db_diagnostics 자체가 실패해도 200으로 내려주고 원인을 JSON에 담음
+        diag = {"error": f"{type(e).__name__}: {e}"}
+
+    connected = bool(diag.get("exists")) and diag.get("integrity") == "ok"
     return jsonify({
         "status": "healthy",
         "database": "connected" if connected else "disconnected",
         "diag": diag
     }), 200
-
 # -----------------------------
 # 기본 QA 스킬
 # -----------------------------
