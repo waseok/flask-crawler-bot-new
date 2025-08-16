@@ -56,6 +56,35 @@ def semantic_answer(utter: str, db_path: str, threshold: float = 0.75):
     app.logger.info(f"[SEMANTIC] utter='{utter}' best_score={best_s:.3f} threshold={threshold}")
     return best_ans if best_s >= threshold else None
 
+# === 페이지 임베딩 검색 ===
+def search_pages(utter: str, db_path: str, topk: int = 3):
+    import numpy as np
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+    cur.execute("""
+      SELECT pages.id, pages.title, pages.url, page_embeddings.vector
+      FROM pages JOIN page_embeddings ON page_embeddings.page_id = pages.id
+    """)
+    rows = cur.fetchall()
+    con.close()
+    if not rows:
+        return []
+
+    qv = _embed_query(utter)  # 이미 있는 함수 사용
+    def cos(a, b):
+        a = np.array(a); b = np.array(b)
+        return float(a @ b / (np.linalg.norm(a)*np.linalg.norm(b) + 1e-8))
+
+    scored = []
+    for pid, title, url, vjson in rows:
+        try:
+            v = json.loads(vjson)
+            s = cos(qv, v)
+            scored.append((s, title, url))
+        except:
+            continue
+    scored.sort(reverse=True, key=lambda x: x[0])
+    return scored[:topk]
 
 # === DB 매니저 초기화 (실패해도 앱은 떠 있게) ===
 try:
@@ -79,6 +108,45 @@ def health():
         "database": "connected" if connected else "disconnected",
         "diag": diag
     }), 200
+
+# === 링크 추천 전용 스킬 (오픈빌더에서 별도 스킬로 연결) ===
+@app.route("/link_reco", methods=["POST"])
+def link_reco():
+    body = request.get_json(silent=True) or {}
+    utter = (body.get("userRequest", {}).get("utterance") or "").strip()
+
+    if not utter or db is None:
+        return ("", 204)  # 스킬 실패 → 오픈빌더 대체응답(기존 폴백)
+
+    try:
+        candidates = search_pages(utter, db.db_path, topk=3)
+        GOOD = [c for c in candidates if c[0] >= 0.78]  # 충분히 유사한 것만
+        if not GOOD:
+            return ("", 204)
+
+        items = []
+        for score, title, url in GOOD:
+            items.append({
+                "title": (title or url)[:50],
+                "description": f"관련도 {score:.2f}",
+                "link": {"web": url}
+            })
+
+        return jsonify({
+            "version": "2.0",
+            "template": {
+                "outputs": [{
+                    "listCard": {
+                        "header": {"title": "가장 관련있는 학교 홈페이지 안내"},
+                        "items": items
+                    }
+                }],
+                "quickReplies": quick_replies  # ← 네가 고정한 버튼 유지
+            }
+        }), 200
+    except Exception as e:
+        app.logger.error(f"[LINK_RECO ERROR] {type(e).__name__}: {e}")
+        return ("", 204)
 
 
 # === 루트 GET: 간단 핑 ===
