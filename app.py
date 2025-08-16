@@ -1,4 +1,3 @@
-# app.py
 import os
 import json
 import sqlite3
@@ -13,6 +12,20 @@ app = Flask(__name__)
 
 # === OpenAI (환경변수 OPENAI_API_KEY 사용) ===
 client = OpenAI()
+
+# === 퀵리플라이: 전역 상수로 고정 (절대 수정 금지 요구 반영) ===
+QUICK_REPLIES = [
+    {"label": "📅 학사일정",             "action": "message", "messageText": "📅 학사일정"},
+    {"label": "📋 늘봄/방과후",          "action": "message", "messageText": "📋 늘봄/방과후"},
+    {"label": "📖 수업시간/시정표(초등)", "action": "message", "messageText": "📖 수업시간/시정표(초등)"},
+    {"label": "📚 교과서",               "action": "message", "messageText": "📚 교과서"},
+    {"label": "🏠 전입/전출",            "action": "message", "messageText": "🏠 전입/전출"},
+    {"label": "📋 증명서/서류",          "action": "message", "messageText": "📋 증명서/서류"},
+    {"label": "📞 연락처/상담",          "action": "message", "messageText": "📞 연락처/상담"},
+    {"label": "🍽️ 급식",                "action": "message", "messageText": "🍽️ 급식"},
+    {"label": "🎶 기타",                 "action": "message", "messageText": "🎶 기타"},
+    {"label": "🧸 유치원",               "action": "message", "messageText": "🧸 유치원"},
+]
 
 # === 임베딩 유틸 ===
 def _cos(a, b):
@@ -72,7 +85,6 @@ def search_pages(utter: str, db_path: str, topk: int = 3):
     if not rows:
         return []
 
-    # 이미 있는 임베딩 함수 사용
     qv = _embed_query(utter)
 
     def cos(a, b):
@@ -97,9 +109,8 @@ except Exception as e:
     db = None
     app.logger.error(f"[DB INIT ERROR] {type(e).__name__}: {e}")
 
-
 # === /health: 진단 정보 노출 (500 방지) ===
-@app.route("/health", methods=["GET"])
+@app.get("/health")
 def health():
     try:
         diag = db_diagnostics()
@@ -114,7 +125,7 @@ def health():
     }), 200
 
 # === 링크 추천 전용 스킬 (오픈빌더에서 별도 스킬로 연결) ===
-@app.route("/link_reco", methods=["POST"])
+@app.post("/link_reco")
 def link_reco():
     body = request.get_json(silent=True) or {}
     utter = (body.get("userRequest", {}).get("utterance") or "").strip()
@@ -124,7 +135,7 @@ def link_reco():
 
     try:
         candidates = search_pages(utter, db.db_path, topk=3)
-       GOOD = [c for c in candidates if c[0] >= 0.60] # 충분히 유사한 것만
+        GOOD = [c for c in candidates if c[0] >= 0.60]  # 임시 낮춤(동작 확인용)
         if not GOOD:
             return ("", 204)
 
@@ -145,22 +156,20 @@ def link_reco():
                         "items": items
                     }
                 }],
-                "quickReplies": quick_replies  # ← 네가 고정한 버튼 유지
+                "quickReplies": QUICK_REPLIES
             }
         }), 200
     except Exception as e:
         app.logger.error(f"[LINK_RECO ERROR] {type(e).__name__}: {e}")
         return ("", 204)
 
-
 # === 루트 GET: 간단 핑 ===
-@app.route("/", methods=["GET"])
+@app.get("/")
 def index():
     return jsonify({"ok": True, "message": "Flask server is running"}), 200
 
-
 # === 카카오 오픈빌더 스킬 엔드포인트 ===
-@app.route("/", methods=["POST"])
+@app.post("/")
 def kakao_skill():
     # 요청 파싱
     try:
@@ -200,49 +209,38 @@ def kakao_skill():
         else:
             answer = "무엇을 도와드릴까요? 🙂"
 
-    # 4) 🔒 퀵리플라이: 사용자 고정 목록 (절대 수정하지 않음)
-    quick_replies = [
-        {"label": "📅 학사일정",           "action": "message", "messageText": "📅 학사일정"},
-        {"label": "📋 늘봄/방과후",        "action": "message", "messageText": "📋 늘봄/방과후"},
-        {"label": "📖 수업시간/시정표(초등)", "action": "message", "messageText": "📖 수업시간/시정표(초등)"},
-        {"label": "📚 교과서",             "action": "message", "messageText": "📚 교과서"},
-        {"label": "🏠 전입/전출",          "action": "message", "messageText": "🏠 전입/전출"},
-        {"label": "📋 증명서/서류",        "action": "message", "messageText": "📋 증명서/서류"},
-        {"label": "📞 연락처/상담",        "action": "message", "messageText": "📞 연락처/상담"},
-        {"label": "🍽️ 급식",              "action": "message", "messageText": "🍽️ 급식"},
-        {"label": "🎶 기타",               "action": "message", "messageText": "🎶 기타"},
-        {"label": "🧸 유치원",             "action": "message", "messageText": "🧸 유치원"},
-    ]
-
     # 카카오 응답 포맷
     response = {
         "version": "2.0",
         "template": {
             "outputs": [{"simpleText": {"text": answer}}],
-            "quickReplies": quick_replies
+            "quickReplies": QUICK_REPLIES
         }
     }
     return jsonify(response), 200
 
+# 임시 통계 라우트
+@app.get("/stats_pages")
+def stats_pages():
+    try:
+        path = db.db_path if db else None
+        if not path:
+            return jsonify({"error": "db not initialized"}), 200
+        con = sqlite3.connect(path)
+        cur = con.cursor()
+        out = {}
+        for t in ("pages", "page_embeddings", "qa_data", "qa_embeddings"):
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM {t}")
+                out[t] = cur.fetchone()[0]
+            except Exception:
+                out[t] = "N/A"
+        con.close()
+        return jsonify(out), 200
+    except Exception as e:
+        return jsonify({"error": f"{type(e).__name__}: {e}"}), 200
 
 # === 로컬 실행용 ===
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-# 임시 통계 라우트
-@app.get("/stats_pages")
-def stats_pages():
-    import sqlite3
-    con = sqlite3.connect(db.db_path)
-    cur = con.cursor()
-    out = {}
-    for t in ("pages", "page_embeddings", "qa_data", "qa_embeddings"):
-        try:
-            cur.execute(f"SELECT COUNT(*) FROM {t}")
-            out[t] = cur.fetchone()[0]
-        except Exception:
-            out[t] = "N/A"
-    con.close()
-    return jsonify(out), 200
-
