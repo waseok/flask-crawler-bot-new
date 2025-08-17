@@ -166,3 +166,12 @@ def health():
 # -----------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
+@app.post("/kakao_echo")
+def kakao_echo():
+    body = request.get_json(silent=True) or {}
+    utter = (body.get("userRequest", {}) or {}).get("utterance")
+    return jsonify({
+        "version":"2.0",
+        "template":{"outputs":[{"simpleText":{"text":f"받은 키: {list(body.keys())}, utterance: {utter}"}}]}
+    }), 200
