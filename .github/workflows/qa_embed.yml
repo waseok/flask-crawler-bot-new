@@ -1,0 +1,41 @@
+name: QA Embed (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install openai
+
+      - name: Run build_embeddings.py
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python build_embeddings.py
+
+      - name: Commit & push DB if changed
+        run: |
+          if git status --porcelain | grep -E 'school_data\.db'; then
+            git add school_data.db
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "auto: update school_data.db (qa embed)"
+            git push
+          else
+            echo "No DB changes."
+          fi
