@@ -262,8 +262,37 @@ def link_reco_internal(user_text: str):
 def link_reco():
     body = request.get_json(silent=True) or {}
     utter = (body.get("userRequest", {}).get("utterance") or "").strip()
-    return link_reco_internal(utter)
 
+    # 바디가 없거나 비어있을 때도 200으로 친절 폴백
+    if not utter:
+        return jsonify({
+            "version": "2.0",
+            "template": {
+                "outputs": [{
+                    "simpleText": {"text": "무엇을 찾고 싶으신가요? 예) 교실 배치도, 시설 대관, 급식표"}
+                }],
+                "quickReplies": QUICK_REPLIES
+            }
+        }), 200
+
+    # 기존 추천 호출
+    resp = link_reco_internal(utter)  # (json, 200) 또는 ("", 204)
+
+    # 결과 없을 때도 200 폴백으로 전환
+    if isinstance(resp, tuple) and len(resp) == 2 and resp[1] == 204:
+        return jsonify({
+            "version": "2.0",
+            "template": {
+                "outputs": [{
+                    "simpleText": {
+                        "text": f"‘{utter}’에 대한 관련 링크를 찾지 못했어요.\n키워드를 바꿔 다시 물어봐 주세요 🙂"
+                    }
+                }],
+                "quickReplies": QUICK_REPLIES
+            }
+        }), 200
+
+    return resp  # listCard 200
 # -----------------------------
 # 메인 스킬: ①QA → ②링크추천 → ③텍스트 폴백 (안전 가드)
 # -----------------------------
